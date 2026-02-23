@@ -202,7 +202,7 @@ class NetworkScannerApp:
             self.log("-" * 50)
 
         if use_netdiscover:
-            self._run_with_timer("Netdiscover", ["netdiscover", "-P", "-S", "-N"], dur, f"{self.report_prefix}_netdiscover.txt")
+            self._run_with_timer("Netdiscover", ["netdiscover", "-P", "-N"], dur, f"{self.report_prefix}_netdiscover.txt")
 
         if use_ipcalc:
             self.log("[*] Ejecutando Ipcalc...")

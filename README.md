@@ -1,14 +1,14 @@
 ## Ejecuacion
 
-SE LE DEBEN DAR PERMISOS SUDO al archivo scaneo\_v2.py.
+SE LE DEBEN DAR PERMISOS SUDO al archivo scaneo_v2.py.
 
-Se selecciona la interfaz a la cual se le hara el escaneo activo para las siguientes fases despues del scaneo del kismet si esta seleccionado.
+Se selecciona la interfaz a la cual se le hara el escaneo pasivo y activo para las siguientes fases despues del scaneo del kismet si esta seleccionado.
 
 El tiempo es para las herramientas de kismet y netDiscover, se implementa en segundos y esta en el apartado "Duracion".
 
 Todos los archivos generados incluido el exel, se almacenan en la carpeta historial. Por cada escaneo se generan subcarpetas que se llamaran por la fecha y hora del escaneo.
 
-Las casillas vienen con preseleccion para hacer un repote completo, pero se pueden desactivar para solo hacer escaneos especificos al ap o solo el escaneo pasivo de kismet.
+Las casillas vienen con preseleccion para hacer un reporte completo, pero se pueden desactivar para solo hacer escaneos especificos al ap o solo el escaneo pasivo de kismet.
 
 Si el equipo lo permite, cuando se esta haciendo el escaneo de kismet, al mostrar el mensaje "Iniciando kismet por x segundos..." se puede iniciar un localhost en el navegador que permite la visualizacion de los datos en tiempo real. http://localhost:2501/ - Este pedira registrar una contra y un usuario para continuar.
 
