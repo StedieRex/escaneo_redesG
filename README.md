@@ -4,7 +4,7 @@ SE LE DEBEN DAR PERMISOS SUDO al archivo scaneo_v2.py.
 
 Se selecciona la interfaz a la cual se le hara el escaneo pasivo y activo para las siguientes fases despues del scaneo del kismet si esta seleccionado.
 
-El tiempo es para las herramientas de kismet y netDiscover, se implementa en segundos y esta en el apartado "Duracion".
+El tiempo es para las herramientas de kismet y netDiscover, se implementa en segundos y esta en el apartado "Duracion". Para kismet habra un tiempo previo para asegurarse que kismet arranco correctamente una vez que la interfaz esta en modo escaneo, es decir que se pierda la conexion a internet por wifi, se hara la siguiente pregunta "¿Ha entrado al modo escaneo de kismet de forma correcta?" en caso de ser si seguira el proceso continua normalemnte, de ser no entonces se volvera a intentar arrancar kismet para que este puede entrar en modo escaneo. Usualmente se entra al modo escaneo cuando ya no se tiene acceso a la interfaz para conectarse a alguna red wifi.
 
 Todos los archivos generados incluido el exel, se almacenan en la carpeta historial. Por cada escaneo se generan subcarpetas que se llamaran por la fecha y hora del escaneo.
 

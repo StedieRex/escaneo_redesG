@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk, scrolledtext
+from tkinter import ttk, scrolledtext, messagebox
 import subprocess
 import threading
 import time
@@ -94,8 +94,6 @@ class NetworkScannerApp:
         self.current_scan_folder = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         self.log(f"[*] ID de Escaneo Generado: {self.current_scan_folder}")
         
-        # --- SOLUCIÓN AL BUG ---
-        # Leemos el estado de todas las variables gráficas AHORA (en el hilo principal)
         scan_config = {
             'interf': self.interface.get(),
             'dur': self.duration.get(),
@@ -107,7 +105,6 @@ class NetworkScannerApp:
             'use_mtr': self.use_mtr.get()
         }
         
-        # Le pasamos las variables ya leídas al hilo secundario usando 'kwargs'
         threading.Thread(target=self._scan_process, kwargs=scan_config, daemon=True).start()
 
     def resume_scan(self):
@@ -119,26 +116,20 @@ class NetworkScannerApp:
         self.root.after(0, lambda: self.progress.config(maximum=duration, value=0))
         
         out_f = open(output_file, "w") if output_file else subprocess.DEVNULL
-        
         try:
             full_cmd = ["sudo", "timeout", f"{duration}s"] + command_list
             process = subprocess.Popen(full_cmd, stdout=out_f, stderr=subprocess.STDOUT)
-            
             for i in range(duration):
-                if process.poll() is not None:
-                    break
+                if process.poll() is not None: break
                 mins, secs = divmod(duration - i, 60)
                 time_str = f"Tiempo Restante: {mins:02d}:{secs:02d}"
                 self.root.after(0, lambda t=time_str, v=i+1: self._update_timer(t, v))
                 time.sleep(1)
-                
             process.wait()
-            
         except Exception as e:
-            self.log(f"[!] Error ejecutando {tool_name}: {e}")
+            self.log(f"[!] Error en {tool_name}: {e}")
         finally:
-            if output_file:
-                out_f.close()
+            if output_file: out_f.close()
             self.root.after(0, lambda: self._update_timer("Tiempo Restante: 00:00", duration))
             self.log(f"[+] {tool_name} finalizado.")
 
@@ -146,128 +137,131 @@ class NetworkScannerApp:
         self.time_label.config(text=text)
         self.progress['value'] = value
 
-    # --- MODIFICADO: Recibe los parámetros en lugar de hacer '.get()' ---
     def _scan_process(self, interf, dur, target, use_kismet, use_netdiscover, use_ipcalc, use_wavemon, use_mtr):
         
+        # --- 1. BLOQUE KISMET (CON ESPERA DE 20S) ---
         if use_kismet:
-            #Este cierre y apertura de kismet, se hace pues soluciona un bug, que inpide a kismet arrancar
-            #despues de haber deseleccionado de las herramientas, y vuelto a usar despues de hacer un escaneo
-            #sin kismet.
-            subprocess.run(["sudo", "pkill", "-f", "kismet"], stderr=subprocess.DEVNULL)
-            time.sleep(2)
-        
-            self._run_with_timer("Kismet", ["kismet", "-c", interf, "--no-ncurses-wrapper"], dur)
+            kismet_done = False
+            while not kismet_done:
+            	# --- Eliminacion de .kismet residuales en caso de que la interfaz no entre en modo escaneo ---
+                self.log("[*] Limpiando archivos .kismet residuales...")
+                for f_old in glob.glob("*.kismet"):
+                    try:
+                        os.remove(f_old)
+                    except:
+                        pass
             
-            self.log("[*] Finalizando procesos remanentes de Kismet...")
-            subprocess.run(["sudo", "pkill", "-f", "kismet"], stderr=subprocess.DEVNULL)
-            time.sleep(2)
-            
+                self.log("[*] Iniciando Kismet. Esperando 20 segundos de estabilización...")
+                subprocess.run(["sudo", "pkill", "-f", "kismet"], stderr=subprocess.DEVNULL)
+                time.sleep(2)
+                
+                full_cmd = ["sudo", "kismet", "-c", interf, "--no-ncurses-wrapper"]
+                process = subprocess.Popen(full_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+                
+                time.sleep(20) # Pausa de 20 segundos según tu requerimiento
+                
+                self.root.answer = None
+                self.root.after(0, lambda: setattr(self.root, 'answer', messagebox.askyesno("Verificación", "¿Ha entrado al modo escaneo de kismet de forma correcta?")))
+                while self.root.answer is None: time.sleep(0.5)
+                
+                if self.root.answer:
+                    self.log("[+] Conexión confirmada. Ejecutando escaneo principal...")
+                    self.root.after(0, lambda: self.progress.config(maximum=dur, value=0))
+                    for i in range(dur):
+                        if process.poll() is not None: break
+                        mins, secs = divmod(dur - i, 60)
+                        self.root.after(0, lambda t=f"Tiempo: {mins:02d}:{secs:02d}", v=i+1: self._update_timer(t, v))
+                        time.sleep(1)
+                    
+                    subprocess.run(["sudo", "pkill", "-f", "kismet"], stderr=subprocess.DEVNULL)
+                    process.wait()
+                    kismet_done = True
+                else:
+                    self.log("[!] No se puedo inciar el modo escaneo. Reiniciando Kismet...")
+                    subprocess.run(["sudo", "pkill", "-f", "kismet"], stderr=subprocess.DEVNULL)
+                    process.wait()
+
+            # Conversión de archivos Kismet
             kismet_files = glob.glob("*.kismet")
             if kismet_files:
-                db_file = kismet_files[0]
-                self.log(f"[*] Convirtiendo {db_file} a JSON...")
+                db_file = sorted(kismet_files, key=os.path.getmtime)[-1]
+                self.log(f"[*] Generando JSON desde {db_file}...")
                 subprocess.run(["sudo", "kismetdb_dump_devices", "--in", db_file, "--out", f"{self.output_name}.json", "--force"])
-                self.log("[!] Archivo JSON generado con éxito.")
-            else:
-                self.log("[!] Error: No se encontró el archivo de base de datos de Kismet.")
             
-            self.log("[*] Restaurando interfaz y servicios de red...")
-            commands = [
-                ["sudo", "airmon-ng", "stop", f"{interf}mon"],
-                ["sudo", "airmon-ng", "stop", interf],
-                ["sudo", "systemctl", "start", "NetworkManager"],
-                ["sudo", "ip", "link", "set", interf, "up"],
-                ["sudo", "systemctl", "restart", "NetworkManager"],
-                ["nmcli", "radio", "wifi", "on"],
-                ["sudo", "airmon-ng", "start", interf],
-                ["sudo", "airmon-ng", "stop", interf],
-                ["sudo", "airmon-ng", "stop", f"{interf}mon"]
+            # Restauración de Red Obligatoria
+            self.log("[*] Restaurando servicios de red...")
+            comandos = [
+            	["sudo", "airmon-ng", "stop", f"{interf}mon"], 
+            	["sudo", "airmon-ng", "stop", interf],
+            	["sudo", "systemctl", "start", "NetworkManager"], 
+            	["sudo", "ip", "link", "set", interf, "up"],
+            	["sudo", "systemctl", "restart", "NetworkManager"],
+            	["nmcli", "radio", "wifi", "on"],
+            	["sudo", "airmon-ng", "start", interf],
+            	["sudo", "airmon-ng", "stop", interf],
+            	["sudo", "airmon-ng", "stop", f"{interf}mon"]
             ]
-            for cmd in commands:
+            for cmd in comandos:
                 subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                
-            self.log("-" * 50)
-            self.log("[!] ESCANEO PASIVO FINALIZADO.")
-            self.log("[!] Por favor, conéctate a tu red Wi-Fi.")
-            self.log("[!] Presiona 'Continuar (Red Restaurada)' cuando tengas conexión.")
-            self.log("-" * 50)
             
+            self.log("-" * 50)
+            self.log("[!] KISMET FINALIZADO. Conéctate al Wi-Fi y pulsa 'Continuar'.")
+            self.log("-" * 50)
             self.root.after(0, lambda: self.continue_btn.config(state="normal"))
             self.continue_event.clear()
-            self.continue_event.wait() 
-            self.log("[+] Iniciando herramientas de diagnóstico de red...")
+            self.continue_event.wait()
         else:
-            self.log("-" * 50)
-            self.log("[!] SE SALTÓ EL ESCANEO DE KISMET.")
-            self.log("-" * 50)
+            self.log("[!] BLOQUE KISMET OMITIDO.")
 
+        # --- 2. BLOQUE DE HERRAMIENTAS ACTIVAS ---
         if use_netdiscover:
             self._run_with_timer("Netdiscover", ["netdiscover", "-P", "-N"], dur, f"{self.report_prefix}_netdiscover.txt")
 
         if use_ipcalc:
             self.log("[*] Ejecutando Ipcalc...")
-            ip_cmd = f"ip -4 addr show {interf} | grep inet | awk '{{print $2}}'"
-            ip_cidr = subprocess.getoutput(ip_cmd).strip()
-            
+            ip_cidr = subprocess.getoutput(f"ip -4 addr show {interf} | grep inet | awk '{{print $2}}'").strip()
             with open(f"{self.report_prefix}_ipcalc.txt", "w") as f:
-                if shutil.which("ipcalc"):
-                    subprocess.run(["ipcalc", ip_cidr], stdout=f)
-                else:
-                    f.write(f"IP/Subnet: {ip_cidr}\n")
-            self.log("[+] Ipcalc completado.")
+                if shutil.which("ipcalc") and ip_cidr: subprocess.run(["ipcalc", ip_cidr], stdout=f)
+            self.log("[+] Ipcalc finalizado.")
 
         if use_wavemon:
-            self.log("[*] Capturando estado del enlace con iw...")
+            self.log("[*] Capturando enlace Wi-Fi...")
             with open(f"{self.report_prefix}_wavemon.txt", "w") as f:
                 subprocess.run(["iw", "dev", interf, "link"], stdout=f)
-            self.log("[+] Estado capturado.")
 
         if use_mtr:
             self.log("[*] Ejecutando MTR...")
-            gw_cmd = "ip route | grep default | awk '{print $3}'"
-            gateway = subprocess.getoutput(gw_cmd).strip()
-            
+            gateway = subprocess.getoutput("ip route | grep default | awk '{print $3}'").strip()
             if gateway:
                 with open(f"{self.report_prefix}_mtr.txt", "w") as f:
                     subprocess.run(["mtr", "-rw", gateway, "--report-cycles", "10"], stdout=f)
-                self.log("[+] MTR finalizado.")
-            else:
-                self.log("[!] No se detectó puerta de enlace para MTR.")
 
+        # --- 3. BLOQUE DE REPORTE FINAL (SIEMPRE SE EJECUTA) ---
         self.log("-" * 50)
-        self.log("[*] Ejecutando conversor_v3.py para procesar Excel...")
-        
+        self.log("[*] Generando reporte Excel con conversor_v3.py...")
         if os.path.exists("conversor_v3.py"):
-            cmd_conversor = ["python3", "conversor_v3.py"]
-            if not use_kismet:
-                cmd_conversor.append("-s")
-                self.log("  -> (Pasando bandera -s para omitir Kismet en el reporte)")
-                
+            cmd_conv = ["python3", "conversor_v3.py"]
+            if not use_kismet: cmd_conv.append("-s") # Bandera para omitir Kismet en el excel
             try:
-                resultado = subprocess.run(cmd_conversor, capture_output=True, text=True)
-                for linea in resultado.stdout.splitlines():
-                    self.log(f"  [conversor] {linea}")
-            except Exception as e:
-                self.log(f"[!] Error al ejecutar conversor_v3.py: {e}")
-        else:
-            self.log("[!] Advertencia: conversor_v3.py no encontrado en el directorio.")
+                res = subprocess.run(cmd_conv, capture_output=True, text=True)
+                for line in res.stdout.splitlines(): self.log(f"  [Excel] {line}")
+            except Exception as e: self.log(f"[!] Error en conversor: {e}")
 
-        ruta_directorio_final = os.path.join(self.destino, self.current_scan_folder)
-        self.log(f"[*] Moviendo archivos a: {ruta_directorio_final}")
+        # Movimiento de archivos al Historial
+        dest_path = os.path.join(self.destino, self.current_scan_folder)
+        if not os.path.exists(dest_path): os.makedirs(dest_path)
         
-        if not os.path.exists(ruta_directorio_final):
-            os.makedirs(ruta_directorio_final)
+        files_to_move = []
+        for ext in ("*.txt", "*.kismet", "*.json", "*.xlsx"):
+            files_to_move.extend(glob.glob(ext))
+        
+        for f in files_to_move:
+            try:
+                shutil.move(f, os.path.join(dest_path, os.path.basename(f)))
+                self.log(f"  -> Archivo guardado: {os.path.basename(f)}")
+            except: pass
 
-        extensions = ("*.txt", "*.kismet", "*.json", "*.xlsx")
-        archivos_movidos = 0
-        for ext in extensions:
-            for archivo in glob.glob(ext):
-                shutil.move(archivo, os.path.join(ruta_directorio_final, os.path.basename(archivo)))
-                self.log(f"  -> Movido: {archivo}")
-                archivos_movidos += 1
-                
-        self.log(f"[+] Total de archivos movidos: {archivos_movidos}")
-        self.log("[!!!] ESCANEO GLOBAL COMPLETADO.")
+        self.log(f"[+++] PROCESO COMPLETADO. Carpeta: {self.current_scan_folder}")
         self.root.after(0, lambda: self.start_btn.config(state="normal"))
 
 if __name__ == "__main__":
